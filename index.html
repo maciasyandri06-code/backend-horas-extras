@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mis Horas Extras</title>
+    <script src="https://tailwindcss.com"></script>
+</head>
+<body class="bg-gray-100 font-sans antialiased text-gray-900 pb-10">
+
+    <div class="max-w-md mx-auto px-4 pt-6">
+        
+        <!-- Encabezado -->
+        <header class="flex justify-between items-center mb-6">
+            <div>
+                <h1 class="text-2xl font-bold text-blue-600">Mis Horas</h1>
+                <p class="text-sm text-gray-500">Modo Offline-First Activo</p>
+            </div>
+            <button onclick="cargarDatosPantalla()" class="bg-blue-100 px-3 py-2 rounded-xl text-blue-600 font-semibold text-xs active:scale-95 transition-transform">
+                🔄 Refrescar
+            </button>
+        </header>
+
+        <!-- Resumen -->
+        <div class="grid grid-cols-2 gap-4 mb-6">
+            <div class="bg-white p-4 rounded-2xl shadow-sm border border-gray-200">
+                <p class="text-xs text-gray-500 font-medium uppercase">Total Extras</p>
+                <p id="total-horas" class="text-2xl font-bold text-gray-800 mt-1">0.0 hrs</p>
+            </div>
+            <div class="bg-white p-4 rounded-2xl shadow-sm border border-gray-200">
+                <p class="text-xs text-gray-500 font-medium uppercase">Días Registrados</p>
+                <p id="total-dias" class="text-2xl font-bold text-gray-800 mt-1">0 días</p>
+            </div>
+        </div>
+
+        <!-- Formulario -->
+        <section class="bg-white p-5 rounded-2xl shadow-sm border border-gray-200 mb-6">
+            <h2 class="text-md font-bold mb-4 text-gray-800">Registrar Tareas del Día</h2>
+            <form id="form-registro" class="space-y-4">
+                <div>
+                    <label class="block text-xs font-bold text-gray-500 uppercase mb-1">Fecha</label>
+                    <input type="date" id="fecha" required class="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500">
+                </div>
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-xs font-bold text-gray-500 uppercase mb-1">Ordinarias</label>
+                        <input type="number" id="ordinarias" value="8" step="0.5" required class="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-bold text-gray-500 uppercase mb-1">Extras</label>
+                        <input type="number" id="extras" placeholder="0" step="0.5" required class="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none">
+                    </div>
+                </div>
+                <div>
+                    <label class="block text-xs font-bold text-gray-500 uppercase mb-1">Actividades</label>
+                    <textarea id="actividades" rows="3" placeholder="¿Qué hiciste hoy?..." required class="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none text-sm"></textarea>
+                </div>
+                <button type="submit" class="w-full bg-blue-600 text-white font-bold p-3 rounded-xl shadow-md active:scale-[0.99] transition-transform">
+                    💾 Guardar Registro
+                </button>
+            </form>
+        </section>
+
+        <!-- Historial -->
+        <section>
+            <h2 class="text-md font-bold mb-3 text-gray-800">Historial de Actividades</h2>
+            <div id="historial-lista" class="space-y-3">
+                <p class="text-sm text-gray-400 text-center py-4">Iniciando sistema local...</p>
+            </div>
+        </section>
+    </div>
+
+    <script>
+        // ⚠️ PEGA AQUÍ LA URL DE TU SERVIDOR EN RENDER TERMINADA EN /api
+        const API_URL = "https://onrender.com"; 
+
+        document.getElementById('fecha').value = new Date().toISOString().substring(0, 10);
+
+        let db;
+        const request = indexedDB.open("ControlHorasDB", 1);
+
+        request.onupgradeneeded = (e) => {
+            db = e.target.result;
+            db.createObjectStore("registros_pendientes", { keyPath: "fecha" });
+        };
+
+        request.onsuccess = (e) => {
+            db = e.target.result;
+            if (navigator.onLine) sincronizarConNube();
+            cargarDatosPantalla();
+        };
+
+        async function cargarDatosPantalla() {
+            let historialCombinado = [];
+            let totalExtras = 0;
+            let totalDias = 0;
+
+            if (navigator.onLine) {
+                try {
+                    const response = await fetch(`${API_URL}/historial`);
+                    if (response.ok) {
+                        const data = await response.json();
+                        historialCombinado = data.historial;
+                        totalExtras = parseFloat(data.totales.total_extras || 0);
+                        totalDias = parseInt(data.totales.dias || 0);
+                    }
+                } catch (e) { console.log("Nube no disponible, usando base local."); }
+            }
+
+            const locales = await obtenerLocales();
+            locales.forEach(local => {
+                if (!historialCombinado.some(n => n.fecha.substring(0,10) === local.fecha)) {
+                    historialCombinado.unshift(local);
+                    totalExtras += parseFloat(local.extras);
+                    totalDias += 1;
+                }
+            });
+
+            document.getElementById('total-horas').innerText = `${totalExtras.toFixed(1)} hrs`;
+            document.getElementById('total-dias').innerText = `${totalDias} días`;
+
+            const contenedor = document.getElementById('historial-lista');
+            contenedor.innerHTML = "";
+
+            if(historialCombinado.length === 0) {
+                contenedor.innerHTML = `<p class="text-sm text-gray-400 text-center py-4">Sin registros guardados.</p>`;
+                return;
+            }
+
+            historialCombinado.forEach(reg => {
+                const esLocal = !reg.hasOwnProperty('id');
+                const fFormateada = new Date(reg.fecha).toLocaleDateString('es-ES', { weekday: 'long', month: 'short', day: 'numeric', timeZone: 'UTC' });
+                
+                contenedor.innerHTML += `
+                    <div class="bg-white p-4 rounded-xl shadow-sm border ${esLocal ? 'border-amber-300 bg-amber-50/20' : 'border-gray-200'} flex justify-between items-start gap-4">
+                        <div class="flex-1">
+                            <p class="font-bold text-gray-800 text-sm capitalize">${fFormateada} ${esLocal ? '⏳ (Pendiente)' : ''}</p>
+                            <p class="text-xs text-gray-500 mt-1">${reg.actividades}</p>
+                        </div>
+                        <span class="${esLocal ? 'bg-amber-100 text-amber-700' : 'bg-green-100 text-green-700'} text-xs font-bold px-2 py-1 rounded-lg shrink-0">
+                            +${reg.extras || reg.horas_extras}h
+                        </span>
+                    </div>`;
+            });
+        }
+
+        document.getElementById('form-registro').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const datos = {
+                fecha: document.getElementById('fecha').value,
+                ordinarias: parseFloat(document.getElementById('ordinarias').value),
+                extras: parseFloat(document.getElementById('extras').value),
+                actividades: document.getElementById('actividades').value
+            };
+
+            await guardarLocal(datos);
+            document.getElementById('actividades').value = '';
+
+            if (navigator.onLine) {
+                await sincronizarConNube();
+            } else {
+                alert('📝 Guardado localmente en tu celular. Se subirá automáticamente al recuperar internet.');
+                cargarDatosPantalla();
+            }
+        });
+
+        async function sincronizarConNube() {
+            const pendientes = await obtenerLocales();
+            for (const datos of pendientes) {
+                try {
+                    const res = await fetch(`${API_URL}/registro`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(datos)
+                    });
+                    if (res.ok) await borrarLocal(datos.fecha);
+                } catch (err) { break; }
+            }
+            cargarDatosPantalla();
+        }
+
+        function guardarLocal(d) { return new Promise(r => { const tx = db.transaction("registros_pendientes", "readwrite"); tx.objectStore("registros_pendientes").put(d); tx.oncomplete = () => r(); }); }
+        function obtenerLocales() { return new Promise(r => { const tx = db.transaction("registros_pendientes", "readonly"); const req = tx.objectStore("registros_pendientes").getAll(); req.onsuccess = () => r(req.result); }); }
+        function borrarLocal(f) { return new Promise(r => { const tx = db.transaction("registros_pendientes", "readwrite"); tx.objectStore("registros_pendientes").delete(f); tx.oncomplete = () => r(); }); }
+
+        window.addEventListener('online', sincronizarConNube);
+    </script>
+</body>
+</html>
